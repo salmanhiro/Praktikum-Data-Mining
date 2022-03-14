@@ -1,0 +1,384 @@
+---
+title: "BreastCancer Wisconsin Diagnostic dataset"
+author: "Shravan Kuchkula"
+date: "10/22/2017"
+output: 
+    html_document:
+        toc: true
+---
+
+## Introduction
+
+Breast Cancer Wisconsin data set from the [*UCI Machine learning repo*](http://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+%28Diagnostic%29) is used to conduct the analysis. The reason for choosing a dimensionality reduction technique like Principal Components Analysis (PCA) is explained in detail. A linear discriminatant function is constructed to predict new observations.
+
+
+
+## Problem statement
+
+Using this dataset of 32 variables measuring the size and shape of cell nuclei, goal is to create a model that will allow us to predict whether a breast cancer cell is benign or malignant.
+
+## Data set description
+
+Features are computed from a digitized image of a fine needle aspirate (FNA) of a breast mass.  They describe characteristics of the cell nuclei present in the image.
+Our dataset consists of 569 observations and 32 variables. There is an ID variable, a diagnosis variable revealing if they were benign or malignant, and 30 measurement variables detailing the size and shape of the cell nuclei. The diagnosis, a categorical variable, is our response variable and the 30 measurement variables, all of which are continuous, are our potential explanatory variables for our model.
+The 30 measurement variables are actually only 10 different features of the nucleus, but with 3 different measurements of each; the mean, the standard error and the ‘worst’ or largest (mean of the three largest values). The 10 features included are:
+
+* **radius** - mean of distances from center to points on the perimeter
+* **texture** - standard deviation of gray-scale values
+* **perimeter**
+* **area**
+* **smoothness** - local variation in radius lengths
+* **compactness** - perimeter^2 / area - 1.0
+* **concavity** - severity of concave portions of the contour
+* **concave points** - number of concave portions of the contour
+* **symmetry** 
+* **fractal dimension** - "coastline approximation" - 1
+
+
+## Importing and Cleaning the data
+
+Using read.csv we can download the dataset as shown:
+
+```{r}
+wdbc <- read.csv("../input/data.csv")
+```
+
+Let's take a peak
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+glimpse(wdbc)
+```
+
+## Exploratory Data Analysis
+Our response variable is diagnosis: Benign (B) or Malignant (M).
+We have 3 sets of 10 numeric variables: mean, se, worst
+
+Let's first collect all the 30 numeric variables into a matrix
+
+```{r}
+# Convert the features of the data: wdbc.data
+wdbc.data <- as.matrix(wdbc[,c(3:32)])
+
+# Set the row names of wdbc.data
+row.names(wdbc.data) <- wdbc$id
+
+# Create diagnosis vector
+diagnosis <- as.numeric(wdbc$diagnosis == "M")
+```
+
+Let's answer some basic questions:
+
+### How many observations have benign or malignant diagnosis ?
+```{r}
+table(wdbc$diagnosis)
+```
+
+### What is the mean of each of the numeric columns ?
+```{r}
+round(colMeans(wdbc.data),2)
+```
+
+### What is the sd of each of the numeric columns ?
+```{r}
+roundSD <- function(x){
+    round(sd(x), 2)
+}
+apply(wdbc.data, 2, roundSD)
+```
+
+### How are the variables related to each other ?
+
+```{r}
+library(corrplot)
+
+corMatrix <- wdbc[,c(3:32)]
+
+
+# Rename the colnames
+cNames <- c("rad_m","txt_m","per_m",
+                 "are_m","smt_m","cmp_m","con_m",
+                 "ccp_m","sym_m","frd_m",
+                 "rad_se","txt_se","per_se","are_se","smt_se",
+                 "cmp_se","con_se","ccp_se","sym_se",
+                 "frd_se","rad_w","txt_w","per_w",
+                 "are_w","smt_w","cmp_w","con_w",
+                 "ccp_w","sym_w","frd_w")
+
+colnames(corMatrix) <- cNames
+
+# Create the correlation matrix
+M <- round(cor(corMatrix), 2)
+
+# Create corrplot
+corrplot(M, diag = FALSE, method="color", order="FPC", tl.srt = 90)
+
+```
+
+From the corrplot, it is evident that there are many variables that are highly correlated with each other.
+
+## Principal Components Analysis
+
+*Why PCA?*
+Due to the number of variables in the model, we can try using a dimensionality reduction technique to unveil any patterns in the data. As mentioned in the Exploratory Data Analysis section, there are thirty variables that when combined can be used to model each patient’s diagnosis. Using PCA we can combine our many variables into different linear combinations that each explain a part of the variance of the model. By proceeding with PCA we are assuming the linearity of the combinations of our variables within the dataset. By choosing only the linear combinations that provide a majority (>= 85%) of the co-variance, we can reduce the complexity of our model. We can then more easily see how the model works and provide meaningful graphs and representations of our complex dataset.
+
+The first step in doing a PCA, is to ask ourselves whether or not the data should be scaled to unit variance. That is, to bring all the numeric variables to the same scale. In other words, we are trying to determine whether we should use a correlation matrix or a covariance matrix in our calculations of eigen values and eigen vectors (aka principal components).
+
+### Running PCA using covariance matrix:
+
+When the covariance matrix is used to calculate the eigen values and eigen vectors, we use the `princomp()` function. Let's take a look at the summary of the princomp output.
+
+```{r}
+wdbc.pcov <- princomp(wdbc.data, scores = TRUE)
+summary(wdbc.pcov)
+```
+Bi-plot using covariance matrix:
+Looking at the descriptive statistics of “area_mean” and “area_worst”, we can observe that they have unusually large values for both mean and standard deviation. The units of measurements for these variables are different than the units of measurements of the other numeric variables. The effect of using variables with different scales can lead to amplified variances. This can be visually assessed by looking at the bi-plot of PC1 vs PC2, calculated from using non-scaled data (vs) scaled data. Below output shows non-scaled data since we are using a covariance matrix.
+
+```{r warning=FALSE}
+cex.before <- par("cex")
+par(cex = 0.7)
+biplot(wdbc.pcov)
+par(cex = cex.before)
+```
+
+We can extract the eigen values from the princomp() function output. The square of the sdev's gives us the eigen value of each component.
+
+```{r}
+# Set up 1 x 2 plotting grid
+par(mfrow = c(1, 2))
+
+# Calculate variability of each component
+pr.cvar <- wdbc.pcov$sdev ^ 2
+
+# Variance explained by each principal component: pve
+pve_cov <- pr.cvar/sum(pr.cvar)
+```
+
+We can then calculate the cumulative proportion explained at each principal component. This will be later useful when creating the screeplots.
+```{r}
+# Eigen values
+round(pr.cvar, 2)
+
+# Percent variance explained
+round(pve_cov, 2)
+
+# Cummulative percent explained
+round(cumsum(pve_cov), 2)
+```
+
+Scree plot using covariance matrix:
+```{r}
+# Plot variance explained for each principal component
+plot(pve_cov, xlab = "Principal Component", 
+     ylab = "Proportion of Variance Explained", 
+     ylim = c(0, 1), type = "b")
+
+# Plot cumulative proportion of variance explained
+plot(cumsum(pve_cov), xlab = "Principal Component", 
+     ylab = "Cumulative Proportion of Variance Explained", 
+     ylim = c(0, 1), type = "b")
+```
+
+The Scree-plots suggest that using a covariance matrix is not the correct approach for calculating the principal components. We will now use the correlation matrix.
+
+### Running PCA using correlation matrix:
+
+When the correlation matrix is used to calculate the eigen values and eigen vectors, we use the `prcomp()` function.
+```{r}
+wdbc.pr <- prcomp(wdbc.data, scale = TRUE, center = TRUE)
+summary(wdbc.pr)
+```
+
+Let's visualize this using a Scree plot
+
+```{r}
+# Set up 1 x 2 plotting grid
+par(mfrow = c(1, 2))
+
+# Calculate variability of each component
+pr.var <- wdbc.pr$sdev ^ 2
+
+# Assign names to the columns to be consistent with princomp.
+# This is done for reporting purposes.
+names(pr.var) <- names(pr.cvar)
+
+# Variance explained by each principal component: pve
+pve <- pr.var/sum(pr.var)
+
+# Assign names to the columns as it is not done by default.
+# This is done to be consistent with princomp.
+names(pve) <- names(pve_cov)
+```
+
+Before creating the plot, let's see the values
+```{r}
+# Eigen values
+round(pr.var, 2)
+
+# Percent variance explained
+round(pve, 2)
+
+# Cummulative percent explained
+round(cumsum(pve), 2)
+```
+
+
+Create a plot of variance explained for each principal component.
+
+```{r}
+# Plot variance explained for each principal component
+plot(pve, xlab = "Principal Component", 
+     ylab = "Proportion of Variance Explained", 
+     ylim = c(0, 1), type = "b")
+
+# Plot cumulative proportion of variance explained
+plot(cumsum(pve), xlab = "Principal Component", 
+     ylab = "Cumulative Proportion of Variance Explained", 
+     ylim = c(0, 1), type = "b")
+```
+
+89% of the variation is explained by the first six PC's. Moreover, the eigen values associated with the first 6 PC's are greater than 1. We will use this criteria to decide on how many PC's to include in the model building phase.
+
+Next, let's create a scatter plot observations by principal components 1 and 2:
+```{r}
+# Scatter plot observations by components 1 and 2
+plot(wdbc.pr$x[, c(1, 2)], col = (diagnosis + 1), 
+     xlab = "PC1", ylab = "PC2")
+legend(x="topleft", pch=1, col = c("red", "black"), legend = c("B", "M"))
+```
+
+There is a clear seperation of diagnosis (M or B) that is evident in the PC1 vs PC2 plot.
+
+By using PCA we took a complex model of 30 (or more) predictors and condensed the model down to six linear combinations of the various predictors.
+
+## Linear Discriminant Analysis (LDA)
+
+From the principal component’s scatter plots it is evident that there is some clustering of benign and malignant points. This suggests that we could build a linear discriminant function using these principal components. Now that we have our chosen principal components we can perform the linear discriminant analysis.
+
+## Model building and validation
+
+Here's the high-level process followed:
+
+* **Build the model using training data**
+* **Predict using the test data**
+* **Evaluate model performance using ROC and AUC**
+
+Our next task is to use the first 6 PCs to build a Linear discriminant function using the `lda()` function in R.
+
+From the `wdbc.pr` object, we need to extract the first six PC's. To do this, let's first check the variables available for this object.
+
+```{r}
+ls(wdbc.pr)
+```
+
+We are interested in the `rotation` (also called loadings) of the first six principal components multiplied by the scaled data, which are called `scores` (basically PC transformed data)
+
+```{r}
+wdbc.pcs <- wdbc.pr$x[,1:6]
+head(wdbc.pcs, 20)
+```
+Here, the rownames help us see how the PC transformed data looks like.
+
+Now, we need to append the `diagnosis` column to this PC transformed data frame `wdbc.pcs`. Let's call the new data frame as `wdbc.pcst`. 
+
+```{r}
+wdbc.pcst <- wdbc.pcs
+wdbc.pcst <- cbind(wdbc.pcs, diagnosis)
+head(wdbc.pcst)
+```
+
+Here, diagnosis == 1 represents malignant and diagnosis == 0 represents benign.
+
+### Split the dataset into training/test data
+
+Using the training data we can build the LDA function. Next, we use the test data to make predictions. 
+
+```{r}
+# Calculate N
+N <- nrow(wdbc.pcst)
+
+# Create a random number vector
+rvec <- runif(N)
+
+# Select rows from the dataframe
+wdbc.pcst.train <- wdbc.pcst[rvec < 0.75,]
+wdbc.pcst.test <- wdbc.pcst[rvec >= 0.75,]
+
+# Check the number of observations
+nrow(wdbc.pcst.train)
+nrow(wdbc.pcst.test)
+```
+
+So, `r nrow(wdbc.pcst.train)` observations are in training dataset and `r nrow(wdbc.pcst.test)` observations are in the test dataset. 
+We will use the training dataset to calculate the `linear discriminant function` by passing it to the `lda()` function of the `MASS` package. 
+
+```{r message=FALSE}
+library(MASS)
+
+wdbc.pcst.train.df <- wdbc.pcst.train
+
+# convert matrix to a dataframe
+wdbc.pcst.train.df <- as.data.frame(wdbc.pcst.train)
+
+# Perform LDA on diagnosis
+wdbc.lda <- lda(diagnosis ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6, data = wdbc.pcst.train.df)
+```
+
+Let's summarize the LDA output:
+
+```{r}
+wdbc.lda
+```
+
+Let's use this to predict by passing the predict function's newdata as the testing dataset.
+
+```{r}
+wdbc.pcst.test.df <- wdbc.pcst.test
+
+# convert matrix to a dataframe
+wdbc.pcst.test.df <- as.data.frame(wdbc.pcst.test)
+
+wdbc.lda.predict <- predict(wdbc.lda, newdata = wdbc.pcst.test.df)
+
+```
+
+Let's check what functions we can invoke on this predict object:
+```{r}
+ls(wdbc.lda.predict)
+```
+
+Our predictions are contained in the `class` attribute.
+
+```{r}
+# print the predictions
+(wdbc.lda.predict.class <- wdbc.lda.predict$class)
+```
+
+### Model Evaluation using ROC and AUC
+
+A better way to evaluate the model is using the ROC curve and AUC metric.
+```{r message=FALSE, warning=FALSE}
+library("ROCR")
+```
+
+
+prediction object is contained in `wdbc.lda.predict`. From this we need extract the posterior probabilities. 
+
+```{r}
+# Get the posteriors as a dataframe.
+wdbc.lda.predict.posteriors <- as.data.frame(wdbc.lda.predict$posterior)
+
+# Evaluate the model
+pred <- prediction(wdbc.lda.predict.posteriors[,2], wdbc.pcst.test.df$diagnosis)
+roc.perf = performance(pred, measure = "tpr", x.measure = "fpr")
+auc.train <- performance(pred, measure = "auc")
+auc.train <- auc.train@y.values
+plot(roc.perf)
+abline(a=0, b= 1)
+text(x = .40, y = .6,paste("AUC = ", round(auc.train[[1]],3), sep = ""))
+
+```
+
+## Conclusion
+
+We have shown how dimensionality reduction technique like principal components analysis can be used to reduce a large number of highly correlated predictors to small set of linear combinations of those predictors. In doing so, we unveiled patterns in the data which led us to build a classification rule using linear discriminant analysis. By applying the classification rule we have constructed a diagnostic system that predicts malignant tumors at 99.47% accuracy rate and predicts benign tumors at 93.06% accuracy rate using a 10-fold cross validation plan. Although these numbers might look good, we need to ask ourselves “what is the cost of misclassification?” The cost of misclassifying someone as having cancer when they don’t could cause a certain amount of emotional grief!! But the cost of misclassifying someone as not having cancer when in fact they do have cancer is obviously greater.
